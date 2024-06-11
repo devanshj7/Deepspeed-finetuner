@@ -75,7 +75,7 @@ def parse_args():
     parser.add_argument(
         "--dataset_name",
         type=str,
-        default=None,
+        default="mlabonne/guanaco-llama2-1k",
         help="The name of the dataset to use (via the datasets library).",
     )
     parser.add_argument(
@@ -99,7 +99,7 @@ def parse_args():
         "--model_name_or_path",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=True,
+        default="mistralai/Mistral-7B-Instruct-v0.2"
     )
     parser.add_argument(
         "--config_name",
@@ -121,7 +121,7 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=8,
+        default=4,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
@@ -169,7 +169,7 @@ def parse_args():
     parser.add_argument(
         "--token_based_lr_decay", action="store_true", help="Use token-based LR decay"
     )
-    parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
+    parser.add_argument("--output_dir", type=str, default="output", help="Where to store the final model.")
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
     parser.add_argument(
         "--model_type",
@@ -218,6 +218,7 @@ def parse_args():
                         type=int,
                         default=-1,
                         help="local_rank for distributed training on gpus")
+    # parser.add_argument('--deepspeed_config', type=str, default="ds_config.json", help="Path to DeepSpeed configuration file")
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
