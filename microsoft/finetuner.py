@@ -121,7 +121,7 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=1,
+        default=2,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
@@ -137,7 +137,7 @@ def parse_args():
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
-    parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs to perform.")
+    parser.add_argument("--num_train_epochs", type=int, default=1, help="Total number of training epochs to perform.")
     parser.add_argument(
         "--max_train_steps",
         type=int,
@@ -147,7 +147,7 @@ def parse_args():
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=1,
+        default=4,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
     parser.add_argument(
@@ -181,7 +181,7 @@ def parse_args():
     parser.add_argument(
         "--block_size",
         type=int,
-        default=None,
+        default=512,
         help=(
             "Optional input sequence length after tokenization. The training dataset will be truncated in block of"
             " this size for training. Default to the model max input length for single sentence inputs (take into"
@@ -216,12 +216,10 @@ def parse_args():
     parser.add_argument("--data_folder", type=str, help="The token to use to push to the Model Hub.")
     parser.add_argument("--local_rank",
                         type=int,
-                        default=-1,
                         help="local_rank for distributed training on gpus")
     # parser.add_argument('--deepspeed_config', type=str, default="ds_config.json", help="Path to DeepSpeed configuration file")
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
-
     # Sanity checks
     if args.dataset_name is None and args.train_file is None and args.validation_file is None:
         raise ValueError("Need either a dataset name or a training/validation file.")
@@ -247,7 +245,8 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
-
+    args.local_rank = int(os.environ["LOCAL_RANK"])
+    
     if args.local_rank == -1:
         device = torch.device("cuda")
     else:
@@ -256,7 +255,6 @@ def main():
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')
         deepspeed.init_distributed()
-
     def print_rank_0(msg):
         if args.local_rank <= 0:
             print(msg)
