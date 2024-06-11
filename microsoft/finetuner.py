@@ -121,7 +121,7 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=4,
+        default=1,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
@@ -256,6 +256,7 @@ def main():
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')
         deepspeed.init_distributed()
+
     def print_rank_0(msg):
         if args.local_rank <= 0:
             print(msg)
@@ -309,7 +310,7 @@ def main():
                 **dataset_args,
             )
 
-    
+
     if args.model_name_or_path is not None:
         config = AutoConfig.from_pretrained(args.model_name_or_path)
     else:
@@ -424,7 +425,7 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     else:
         args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-        
+
     # Train!
     print_rank_0("***** Running training *****")
     print_rank_0(f"  Num examples = {len(train_dataset)}")
@@ -555,7 +556,7 @@ def main():
             model = convert_to_random_ltd(model, GPT2Block)
             random_ltd_layer_num = model.random_ltd_scheduler.get_random_ltd_layer_num()
             total_layer_num = model.random_ltd_scheduler.model_layer_num
-           
+
         epoch = 0
         global_step = 0
         micro_step = 0
@@ -563,65 +564,65 @@ def main():
         consumed_token = 0
         args.eval_step = max(1, args.max_train_steps // 100)
         while consumed_token < total_tokens:
-        # for epoch in range(num_train_epochs):
-            if epoch == 0:
-                perplexity = evaluation(model, eval_dataloader)
-                current_best = min(current_best, perplexity)
-                print_rank_0 (f"*************************initialization with perplexity {perplexity}***********************************")            
-            model.train()
-            for step, batch in enumerate(train_dataloader):
+            for epoch in range(num_train_epochs):
+                if epoch == 0:
+                    perplexity = evaluation(model, eval_dataloader)
+                    current_best = min(current_best, perplexity)
+                    print_rank_0(f"*************************initialization with perplexity {perplexity}***********************************")            
                 model.train()
-                if args.curriculum_learning:
-                    curriculum_seqlen = batch['input_ids'].size()[1]
-                    if hasattr(args, 'data_efficiency_curriculum_learning_seqlen_type') and \
-                        args.data_efficiency_curriculum_learning_seqlen_type == 'seqlen_reshape':
-                        args.data_efficiency_curriculum_learning_numel = torch.numel(batch['input_ids'])
-                batch = to_device(batch)                
-                outputs = model(**batch)
-                loss = outputs.loss
-                # loss = loss / args.gradient_accumulation_steps # DeepSpeed engine will handle this loss scaling (_scale_loss_by_gas), thus no need to do so on user side
-                model.backward(loss)
+                for step, batch in enumerate(train_dataloader):
+                    model.train()
+                    if args.curriculum_learning:
+                        curriculum_seqlen = batch['input_ids'].size()[1]
+                        if hasattr(args, 'data_efficiency_curriculum_learning_seqlen_type') and \
+                            args.data_efficiency_curriculum_learning_seqlen_type == 'seqlen_reshape':
+                            args.data_efficiency_curriculum_learning_numel = torch.numel(batch['input_ids'])
+                    batch = to_device(batch)         
+                    outputs = model(**batch)
+                    loss = outputs.loss
+                    # loss = loss / args.gradient_accumulation_steps # DeepSpeed engine will handle this loss scaling (_scale_loss_by_gas), thus no need to do so on user side
+                    model.backward(loss)
 
-                actual_seq_length = args.block_size
-                if args.curriculum_learning:
-                    actual_seq_length = curriculum_seqlen
-                if args.random_ltd:
-                    reserved_length = model.random_ltd_scheduler.get_current_seq()
-                    if reserved_length < actual_seq_length:
-                        actual_seq_length = (actual_seq_length * (total_layer_num - random_ltd_layer_num) + reserved_length * random_ltd_layer_num) // total_layer_num
-                if args.curriculum_learning:
-                    if hasattr(args, 'data_efficiency_curriculum_learning_numel'):
-                        act_mbsz = args.data_efficiency_curriculum_learning_numel / curriculum_seqlen
-                        act_token = act_mbsz * actual_seq_length
-                        consumed_token += act_token * world_size
+                    actual_seq_length = args.block_size
+                    if args.curriculum_learning:
+                        actual_seq_length = curriculum_seqlen
+                    if args.random_ltd:
+                        reserved_length = model.random_ltd_scheduler.get_current_seq()
+                        if reserved_length < actual_seq_length:
+                            actual_seq_length = (actual_seq_length * (total_layer_num - random_ltd_layer_num) + reserved_length * random_ltd_layer_num) // total_layer_num
+                    if args.curriculum_learning:
+                        if hasattr(args, 'data_efficiency_curriculum_learning_numel'):
+                            act_mbsz = args.data_efficiency_curriculum_learning_numel / curriculum_seqlen
+                            act_token = act_mbsz * actual_seq_length
+                            consumed_token += act_token * world_size
+                        else:
+                            consumed_token += actual_seq_length * args.per_device_train_batch_size * world_size
                     else:
                         consumed_token += actual_seq_length * args.per_device_train_batch_size * world_size
-                else:
-                    consumed_token += actual_seq_length * args.per_device_train_batch_size * world_size
 
-                if args.token_based_lr_decay:
-                    model.step(lr_kwargs={'increment': 1, 'consumed_tokens': consumed_token})
-                else:
-                    model.step()
-                micro_step += 1
-                if micro_step % args.gradient_accumulation_steps == 0:
-                    global_step += 1
-                    # Evaluate perplexity on the validation set.
-                    if global_step%args.eval_step==0 or step == len(train_dataloader)-1:
-                        perplexity = evaluation(model, eval_dataloader)
-                        current_best = min(current_best, perplexity)
-                        log_text = f"At epoch {epoch+1} step {global_step} consumed_token {consumed_token} perplexity {perplexity} current best {current_best}"
-                        if args.random_ltd:
-                            log_text = f"{log_text} random-ltd reserved_length {reserved_length}"
-                        print_rank_0(log_text)
+                    if args.token_based_lr_decay:
+                        model.step(lr_kwargs={'increment': 1, 'consumed_tokens': consumed_token})
+                    else:
+                        model.step()
+                    micro_step += 1
+                    if micro_step % args.gradient_accumulation_steps == 0:
+                        global_step += 1
+                        # Evaluate perplexity on the validation set.
+                        if global_step%args.eval_step==0 or step == len(train_dataloader)-1:
+                            perplexity = evaluation(model, eval_dataloader)
+                            current_best = min(current_best, perplexity)
+                            log_text = f"At epoch {epoch+1} step {global_step} consumed_token {consumed_token} perplexity {perplexity} current best {current_best}"
+                            if args.random_ltd:
+                                log_text = f"{log_text} random-ltd reserved_length {reserved_length}"
+                            print_rank_0(log_text)
+                    if consumed_token >= total_tokens:
+                        break
+                perplexity = evaluation(model, eval_dataloader)
+                current_best = min(current_best, perplexity)
+                print_rank_0(f"End of epoch {epoch+1} step {global_step} consumed_token {consumed_token} perplexity {perplexity} current best {current_best}")
                 if consumed_token >= total_tokens:
                     break
-            perplexity = evaluation(model, eval_dataloader)
-            current_best = min(current_best, perplexity)
-            print_rank_0(f"End of epoch {epoch+1} step {global_step} consumed_token {consumed_token} perplexity {perplexity} current best {current_best}")
-            if consumed_token >= total_tokens:
-                break
-            epoch += 1
+                epoch += 1
         duration = (time.time() - start) / 3600.0
         print_rank_0(f"End of training epoch {epoch+1} step {global_step} consumed_token {consumed_token} best perplexity {current_best} time {duration} hr")
         if args.output_dir is not None:
@@ -640,8 +641,8 @@ def main():
                 model_to_save.config.to_json_file(output_config_file)
                 tokenizer.save_vocabulary(args.output_dir)
 
-
     training(model, train_dataloader, train_dataset, eval_dataloader, args.num_train_epochs, args)
-    
+
+
 if __name__ == "__main__":
     main()
