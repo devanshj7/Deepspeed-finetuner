@@ -259,6 +259,7 @@ def main():
         if args.local_rank <= 0:
             print(msg)
     # If passed along, set the training seed now.
+    print_rank_0(f"#########{args.local_rank}@@@@@@@@")
     if args.seed is not None:
         set_seed(args.seed)
         random.seed(args.seed)
@@ -561,24 +562,28 @@ def main():
         current_best = float("inf")
         consumed_token = 0
         args.eval_step = max(1, args.max_train_steps // 100)
+
         while consumed_token < total_tokens:
             for epoch in range(num_train_epochs):
                 if epoch == 0:
                     perplexity = evaluation(model, eval_dataloader)
                     current_best = min(current_best, perplexity)
-                    print_rank_0(f"*************************initialization with perplexity {perplexity}***********************************")            
-                model.train()
+                    print_rank_0(f"*************************initialization with perplexity {perplexity}***********************************")
+
+                model.train()  # Model training mode at the start of epoch
+
                 for step, batch in enumerate(train_dataloader):
-                    model.train()
                     if args.curriculum_learning:
                         curriculum_seqlen = batch['input_ids'].size()[1]
                         if hasattr(args, 'data_efficiency_curriculum_learning_seqlen_type') and \
                             args.data_efficiency_curriculum_learning_seqlen_type == 'seqlen_reshape':
                             args.data_efficiency_curriculum_learning_numel = torch.numel(batch['input_ids'])
-                    batch = to_device(batch)         
+
+                    batch = to_device(batch)
+
                     outputs = model(**batch)
                     loss = outputs.loss
-                    # loss = loss / args.gradient_accumulation_steps # DeepSpeed engine will handle this loss scaling (_scale_loss_by_gas), thus no need to do so on user side
+
                     model.backward(loss)
 
                     actual_seq_length = args.block_size
@@ -588,6 +593,7 @@ def main():
                         reserved_length = model.random_ltd_scheduler.get_current_seq()
                         if reserved_length < actual_seq_length:
                             actual_seq_length = (actual_seq_length * (total_layer_num - random_ltd_layer_num) + reserved_length * random_ltd_layer_num) // total_layer_num
+
                     if args.curriculum_learning:
                         if hasattr(args, 'data_efficiency_curriculum_learning_numel'):
                             act_mbsz = args.data_efficiency_curriculum_learning_numel / curriculum_seqlen
@@ -602,25 +608,34 @@ def main():
                         model.step(lr_kwargs={'increment': 1, 'consumed_tokens': consumed_token})
                     else:
                         model.step()
+
                     micro_step += 1
+
                     if micro_step % args.gradient_accumulation_steps == 0:
                         global_step += 1
+
                         # Evaluate perplexity on the validation set.
-                        if global_step%args.eval_step==0 or step == len(train_dataloader)-1:
+                        if global_step % args.eval_step == 0 or step == len(train_dataloader) - 1:
                             perplexity = evaluation(model, eval_dataloader)
                             current_best = min(current_best, perplexity)
                             log_text = f"At epoch {epoch+1} step {global_step} consumed_token {consumed_token} perplexity {perplexity} current best {current_best}"
                             if args.random_ltd:
                                 log_text = f"{log_text} random-ltd reserved_length {reserved_length}"
                             print_rank_0(log_text)
+
                     if consumed_token >= total_tokens:
-                        break
+                        break  # Exit batch loop if total tokens consumed
+
+                # End of epoch
                 perplexity = evaluation(model, eval_dataloader)
                 current_best = min(current_best, perplexity)
                 print_rank_0(f"End of epoch {epoch+1} step {global_step} consumed_token {consumed_token} perplexity {perplexity} current best {current_best}")
+
                 if consumed_token >= total_tokens:
-                    break
-                epoch += 1
+                    break  # Exit epoch loop if total tokens consumed
+
+            epoch += 1
+
         duration = (time.time() - start) / 3600.0
         print_rank_0(f"End of training epoch {epoch+1} step {global_step} consumed_token {consumed_token} best perplexity {current_best} time {duration} hr")
         if args.output_dir is not None:

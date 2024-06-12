@@ -1,0 +1,8 @@
+datasets
+sentencepiece
+protobuf
+transformers
+accelerate
+deepspeed
+wandb
+tqdm
