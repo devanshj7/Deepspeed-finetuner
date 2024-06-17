@@ -1,0 +1,91 @@
+{
+    "train_batch_size": 2,
+    "train_micro_batch_size_per_gpu": 1,
+    "steps_per_print": 2000,
+    "gradient_accumulation_steps": 1,
+    "zero_allow_untested_optimizer": true,
+    "zero_optimization": {
+        "stage": 3,
+        "overlap_comm": true,
+        "contiguous_gradients": true,
+        "sub_group_size": 1e7,
+        "reduce_bucket_size": 3e8,
+        "stage3_prefetch_bucket_size": 3e8,
+        "stage3_param_persistence_threshold": 1e6,
+        "stage3_max_live_parameters": 1e9,
+        "stage3_max_reuse_distance": 1e9,
+        "stage3_gather_16bit_weights_on_model_save": true,
+        "round_robin_gradients": true
+    },
+    "fp16": {
+        "enabled": true,
+        "auto_cast": true,
+        "loss_scale": 0,
+        "initial_scale_power": 16,
+        "loss_scale_window": 1000,
+        "hysteresis": 2,
+        "consecutive_hysteresis": false,
+        "min_loss_scale": 1
+    },
+    "optimizer": {
+        "type": "AdamW",
+        "params": {
+            "lr": 3e-05,
+            "betas": [
+                0.8,
+                0.999
+            ],
+            "eps": 1e-08,
+            "weight_decay": 3e-7
+        }
+    },
+    "scheduler": {
+        "type": "WarmupLR",
+        "params": {
+            "warmup_min_lr": 0,
+            "warmup_max_lr": 3e-05,
+            "warmup_num_steps": 100
+        }
+    },
+    "compression_training": {
+        "weight_quantization": {
+            "shared_parameters": {
+                "enabled": true,
+                "quantizer_kernel": false,
+                "schedule_offset": 0,
+                "quantize_groups": 1,
+                "quantize_verbose": false,
+                "quantization_type": "symmetric",
+                "rounding": "nearest",
+                "quantize_weight_in_forward": false,
+                "fp16_mixed_quantize": {
+                    "enabled": false,
+                    "quantize_change_ratio": 0.001
+                }
+            },
+            "different_groups": {
+                "wq1": {
+                    "params": {
+                        "start_bits": 8,
+                        "target_bits": 8,
+                        "quantization_period": 50
+                    },
+                    "modules": [
+                        "attention.self",
+                        "intermediate"
+                    ]
+                },
+                "wq2": {
+                    "params": {
+                        "start_bits": 4,
+                        "target_bits": 4,
+                        "quantization_period": 50
+                    },
+                    "modules": [
+                        "attention.output"
+                    ]
+                }
+            }
+        }
+    }
+}
